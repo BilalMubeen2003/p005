@@ -155,6 +155,14 @@ const PATHS = {
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </>
   ),
+  trash: (
+    <>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14H6L5 6m3 0V3h8v3" />
+      <line x1="10" y1="10" x2="10" y2="16" />
+      <line x1="14" y1="10" x2="14" y2="16" />
+    </>
+  ),
   menu: (
     <>
       <line x1="3" y1="6" x2="21" y2="6" />

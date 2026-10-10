@@ -33,7 +33,7 @@ const formFromReport = (doc) => ({
  * All state for the "New report" workflow lives here (lifted into App) so a
  * half-finished report survives switching between pages.
  */
-export function useReportEditor({ onGenerated, onApproved, notify }) {
+export function useReportEditor({ onGenerated, onApproved, onRejected, notify }) {
   const [form, setForm] = useState(emptyForm);
   const [attempted, setAttempted] = useState(false);
   const [report, setReport] = useState(null);
@@ -42,6 +42,10 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
   const [error, setError] = useState(null);
   const [approved, setApproved] = useState(false);
   const [reviewed, setReviewed] = useState(false);
+  const [stage, setStage] = useState("details");
+  const [messages, setMessages] = useState([]);
+  const [clarificationComplete, setClarificationComplete] = useState(false);
+  const [findingsSummary, setFindingsSummary] = useState("");
 
   const needsReason = usesReasonForExam(form.templateName);
 
@@ -57,6 +61,8 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
     if (!form.findings.trim()) m.push("Findings");
     return m;
   }, [form, needsReason]);
+
+  const detailsMissing = useMemo(() => missing.filter((item) => item !== "Findings"), [missing]);
 
   const original = useMemo(() => (report ? draftFromReport(report) : null), [report]);
 
@@ -88,6 +94,9 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
       findings: "",
       radiologistImpression: "",
     }));
+    setMessages([]);
+    setClarificationComplete(false);
+    setFindingsSummary("");
   }, []);
 
   const loadDoc = (doc, isApproved = false) => {
@@ -111,10 +120,64 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
       loadDoc(doc);
       onGenerated?.(doc);
       notify("Draft report ready for review", "success");
-    } catch {
+    } catch (requestError) {
       setError(
-        "Could not generate the report. Make sure the backend is running on port 5002.",
+        requestError.response?.data?.error ||
+          "Could not generate the report. Please check your connection and try again.",
       );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const startClarification = () => {
+    setAttempted(true);
+    if (detailsMissing.length) {
+      notify(`Please complete: ${detailsMissing.join(", ")}`, "warning");
+      return;
+    }
+    setStage("chat");
+    setError(null);
+    if (!messages.length) {
+      setMessages([{ role: "assistant", content: `Describe the ${form.templateName} findings in your own words. Include measurements, location and laterality where relevant.` }]);
+    }
+  };
+
+  const sendFinding = async (content) => {
+    const value = String(content || "").trim();
+    if (!value || busy) return;
+    const nextMessages = [...messages, { role: "user", content: value }];
+    setMessages(nextMessages);
+    setBusy("clarifying");
+    setError(null);
+    try {
+      const result = await api.clarify({ ...form, messages: nextMessages });
+      setFindingsSummary(result.findingsSummary || value);
+      setClarificationComplete(Boolean(result.complete));
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: result.complete ? "I have enough detail to draft the report. Review the captured findings, then continue." : result.question },
+      ]);
+    } catch (requestError) {
+      setError(requestError.response?.data?.error || "The clinical assistant could not respond. Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const generateFromChat = async () => {
+    if (!clarificationComplete || !findingsSummary) return;
+    setForm((current) => ({ ...current, findings: findingsSummary }));
+    setBusy("generating");
+    setError(null);
+    try {
+      const doc = await api.generate({ ...form, findings: findingsSummary });
+      loadDoc(doc);
+      setStage("review");
+      onGenerated?.(doc);
+      notify("Impression and recommendations are ready", "success");
+    } catch (requestError) {
+      setError(requestError.response?.data?.error || "Could not generate the report. Please try again.");
     } finally {
       setBusy(null);
     }
@@ -143,8 +206,11 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
       setReviewed(false);
       onGenerated?.(doc);
       notify("Impression re-drafted from the updated findings", "success");
-    } catch {
-      setError("Re-draft failed. Check that the backend is running.");
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.error ||
+          "Could not re-draft the report. Please check your connection and try again.",
+      );
     } finally {
       setBusy(null);
     }
@@ -197,6 +263,23 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
     }
   };
 
+  const reject = async () => {
+    if (!report || approved) return;
+    setBusy("rejecting");
+    setError(null);
+    try {
+      const rejected = report;
+      await api.deleteReport(rejected);
+      reset();
+      onRejected?.(rejected);
+      notify("Report rejected and deleted", "success");
+    } catch {
+      setError("Could not delete this report. Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const reset = useCallback(() => {
     setForm(emptyForm());
     setReport(null);
@@ -205,6 +288,10 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
     setReviewed(false);
     setError(null);
     setAttempted(false);
+    setStage("details");
+    setMessages([]);
+    setClarificationComplete(false);
+    setFindingsSummary("");
   }, []);
 
   const openExisting = useCallback((doc, isApproved) => {
@@ -224,6 +311,7 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
     setField,
     selectTemplate,
     missing,
+    detailsMissing,
     attempted,
     needsReason,
     report,
@@ -238,10 +326,19 @@ export function useReportEditor({ onGenerated, onApproved, notify }) {
     reviewed,
     setReviewed,
     generate,
+    stage,
+    messages,
+    clarificationComplete,
+    findingsSummary,
+    startClarification,
+    sendFinding,
+    generateFromChat,
+    backToDetails: () => setStage("details"),
     redraft,
     updateDraft,
     revert,
     approve,
+    reject,
     reset,
     openExisting,
     hasOpenDraft: Boolean(report && !approved),

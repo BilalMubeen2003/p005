@@ -60,6 +60,19 @@ export const getLocalReports = () =>
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
   );
 
+export const deleteLocalReport = (id) => {
+  const store = readStore();
+  const key = String(id);
+  const matchingKey = Object.keys(store.reports).find(
+    (candidate) =>
+      candidate === key || String(store.reports[candidate]?._id) === key,
+  );
+  const reportKey = matchingKey || key;
+  delete store.reports[reportKey];
+  delete store.approvals[reportKey];
+  writeStore(store);
+};
+
 export const saveLocalApproval = (approval, { pendingSync = true } = {}) => {
   const store = readStore();
   const id = String(

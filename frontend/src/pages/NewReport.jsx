@@ -1,10 +1,10 @@
-import { useMemo } from "react";
+import { useState } from "react";
 import Icon from "../components/Icon";
 import AutoTextarea from "../components/AutoTextarea";
-import ReportPaper, { PaperSection } from "../components/ReportPaper";
+import ReportPaper from "../components/ReportPaper";
 import EditableSection from "../components/EditableSection";
 import StatusBadge from "../components/StatusBadge";
-import { STEPS, TEMPLATES, usesReasonForExam } from "../lib/constants";
+import { TEMPLATES, usesReasonForExam } from "../lib/constants";
 import {
   buildPlainText,
   formatDateTime,
@@ -38,51 +38,24 @@ function Field({ label, required, error, aside, children, className = "" }) {
   );
 }
 
-function ComposeView({ editor, settings }) {
-  const { form, setField, selectTemplate, missing, attempted, needsReason, busy, error } = editor;
-  const tpl = TEMPLATES[form.templateName];
-
-  const err = (value, msg = "Required") => (attempted && !String(value).trim() ? msg : null);
+function ComposeView({ editor }) {
+  const { form, setField, selectTemplate, attempted, needsReason, error, stage } = editor;
   const on = (e) => setField(e.target.name, e.target.value);
-
-  const stepDone = useMemo(
-    () => ({
-      template: Boolean(form.templateName),
-      patient: Boolean(form.regNo && form.patientName && form.patientAge && form.patientSex),
-      clinical: Boolean((needsReason ? form.reasonForExam : form.clinicalFeature) && form.findings),
-      review: false,
-    }),
-    [form, needsReason],
-  );
-
-  const scrollTo = (id) => {
-    document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  const insertNormal = () => {
-    if (!tpl) return;
-    if (form.findings.trim() && !window.confirm("Replace the current findings with the normal template?")) return;
-    setField("findings", tpl.normalFindings);
-  };
-
-  const words = form.findings.trim() ? form.findings.trim().split(/\s+/).length : 0;
-  const generating = busy === "generating";
-
-  const onKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      e.preventDefault();
-      if (!generating) editor.generate();
-    }
-  };
+  const err = (value) => (attempted && !String(value).trim() ? "Required" : null);
+  const steps = [
+    { id: "details", label: "Case details" },
+    { id: "chat", label: "Clinical findings" },
+    { id: "review", label: "Draft & review" },
+  ];
+  const current = stage === "chat" ? 1 : 0;
 
   return (
-    <div className="page page-wide" onKeyDown={onKeyDown}>
+    <div className="page report-flow">
       <div className="page-head">
         <div>
-          <h1 className="page-title">New radiology report</h1>
-          <p className="page-sub">
-            Enter the examination, patient details and your findings. The assistant drafts an impression you can edit before approving.
-          </p>
+          <div className="eyebrow">AI-assisted reporting</div>
+          <h1 className="page-title">Create a new report</h1>
+          <p className="page-sub">Start with the facts. Your clinical co-pilot will help make the findings complete before drafting.</p>
         </div>
         {(form.templateName || form.patientName) && (
           <button
@@ -96,28 +69,22 @@ function ComposeView({ editor, settings }) {
       </div>
 
       <ol className="stepper">
-        {STEPS.map((s, i) => {
-          const done = stepDone[s.id];
-          const current = !done && (i === 0 || stepDone[STEPS[i - 1].id]);
-          return (
-            <li key={s.id} className={`step${done ? " is-done" : ""}${current ? " is-current" : ""}`}>
-              <button type="button" onClick={() => s.id !== "review" && scrollTo(s.id)} disabled={s.id === "review"}>
-                <span className="step-dot">{done ? <Icon name="check" size={12} strokeWidth={3} /> : i + 1}</span>
-                <span className="step-label">{s.label}</span>
-              </button>
-            </li>
-          );
-        })}
+        {steps.map((s, i) => <li key={s.id} className={`step${i < current ? " is-done" : ""}${i === current ? " is-current" : ""}`}>
+          <button type="button" disabled={i >= current} onClick={() => i === 0 && editor.backToDetails()}>
+            <span className="step-dot">{i < current ? <Icon name="check" size={12} strokeWidth={3} /> : i + 1}</span>
+            <span className="step-label">{s.label}</span>
+          </button>
+        </li>)}
       </ol>
 
-      <div className="compose">
-        <div className="compose-form">
-          {/* 1. Examination */}
-          <section className="card" id="sec-template">
+      {stage === "details" ? (
+        <div className="flow-grid">
+          <div>
+          <section className="card">
             <div className="card-head">
               <div>
-                <h2 className="card-title"><span className="card-num">1</span> Examination</h2>
-                <p className="card-sub">Choose the study type. Technique is filled in for you.</p>
+                <h2 className="card-title">Examination</h2>
+                <p className="card-sub">Choose the study you are reporting.</p>
               </div>
             </div>
             <div className="tpl-grid" role="radiogroup" aria-label="Examination template">
@@ -157,12 +124,11 @@ function ComposeView({ editor, settings }) {
             )}
           </section>
 
-          {/* 2. Patient */}
-          <section className="card" id="sec-patient">
+          <section className="card">
             <div className="card-head">
               <div>
-                <h2 className="card-title"><span className="card-num">2</span> Patient information</h2>
-                <p className="card-sub">Demographics and referral details.</p>
+                <h2 className="card-title">Patient information</h2>
+                <p className="card-sub">Enter factual patient and referral details.</p>
               </div>
             </div>
             <div className="grid-3">
@@ -205,12 +171,11 @@ function ComposeView({ editor, settings }) {
             </div>
           </section>
 
-          {/* 3. Clinical */}
-          <section className="card" id="sec-clinical">
+          <section className="card">
             <div className="card-head">
               <div>
-                <h2 className="card-title"><span className="card-num">3</span> Clinical details &amp; findings</h2>
-                <p className="card-sub">What you observed. You can still edit the findings after the draft is generated.</p>
+                <h2 className="card-title">Clinical context</h2>
+                <p className="card-sub">Add the indication here. You will describe imaging findings in the next step.</p>
               </div>
             </div>
 
@@ -253,85 +218,89 @@ function ComposeView({ editor, settings }) {
                   </Field>
                 )}
 
-                <Field
-                  label="Findings"
-                  required
-                  error={err(form.findings)}
-                  aside={
-                    <button type="button" className="btn-text btn-text-primary" onClick={insertNormal}>
-                      <Icon name="file" size={13} /> Insert normal template
-                    </button>
-                  }
-                >
-                  <AutoTextarea
-                    name="findings"
-                    minRows={6}
-                    value={form.findings}
-                    onChange={on}
-                    placeholder="Describe your observations in detail…"
-                  />
-                  <div className="field-foot">
-                    <span>{words} words · {form.findings.length} characters</span>
-                    <span className="hide-sm">Ctrl + Enter to generate</span>
-                  </div>
-                </Field>
               </>
             )}
           </section>
-
-          <div className="generate-bar">
-            <div className="generate-status">
-              {missing.length === 0 ? (
-                <span className="text-ok"><Icon name="checkCircle" size={15} /> Ready to generate</span>
-              ) : (
-                <span className="muted">
-                  <b>{missing.length}</b> required {missing.length === 1 ? "field" : "fields"} left
-                  <span className="hide-sm">: {missing.join(", ")}</span>
-                </span>
-              )}
-            </div>
-            <button type="button" className="btn btn-primary btn-lg" onClick={editor.generate} disabled={generating}>
-              {generating ? (
-                <><span className="spinner" /> Drafting report…</>
-              ) : (
-                <><Icon name="sparkle" size={15} /> Generate draft</>
-              )}
+          <div className="flow-actions">
+            <span className="muted small">Clinical findings are collected in the next step.</span>
+            <button type="button" className="btn btn-primary btn-lg" onClick={editor.startClarification}>
+              Continue to findings <Icon name="arrowRight" size={15} />
             </button>
           </div>
-
           {error && (
             <div className="notice notice-danger mt-12">
               <Icon name="alert" size={16} /> {error}
             </div>
           )}
-        </div>
-
-        <div className="compose-preview">
-          <div className="preview-label">
-            <span className="live-dot" /> Live preview
           </div>
-          <ReportPaper templateName={form.templateName} data={form} settings={settings} live>
-            <PaperSection label="Technique" value={form.technique} />
-            {needsReason ? (
-              <>
-                <PaperSection label="Reason for exam" value={form.reasonForExam} />
-                {form.comparison && <PaperSection label="Comparison" value={form.comparison} />}
-              </>
-            ) : (
-              <PaperSection label="Clinical features" value={form.clinicalFeature} />
-            )}
-            <PaperSection label="Findings" value={form.findings} placeholder="Your findings will appear here." />
-            <PaperSection
-              label="Impression"
-              tag="AI"
-              value={generating ? "Drafting…" : ""}
-              placeholder="Drafted by the assistant after you click Generate."
-            />
-          </ReportPaper>
+          <aside className="case-summary card card-tight">
+            <div className="case-summary-icon"><Icon name={TEMPLATES[form.templateName]?.region || "file"} size={22} /></div>
+            <h2 className="card-title">Case snapshot</h2>
+            <dl className="kv">
+              <div><dt>Examination</dt><dd>{form.templateName || "Not selected"}</dd></div>
+              <div><dt>Patient</dt><dd>{form.patientName || "Not entered"}</dd></div>
+              <div><dt>Reg. no.</dt><dd>{form.regNo || "—"}</dd></div>
+              <div><dt>Clinical context</dt><dd>{form.reasonForExam || form.clinicalFeature || "—"}</dd></div>
+            </dl>
+            <p className="case-summary-note"><Icon name="lock" size={13} /> Patient details stay separate from the AI findings interview.</p>
+          </aside>
         </div>
-      </div>
+      ) : (
+        <ClarificationView editor={editor} />
+      )}
     </div>
   );
+}
+
+function ClarificationView({ editor }) {
+  const [input, setInput] = useState("");
+  const sending = editor.busy === "clarifying";
+  const generating = editor.busy === "generating";
+  const submit = (e) => {
+    e.preventDefault();
+    if (!input.trim() || sending) return;
+    editor.sendFinding(input);
+    setInput("");
+  };
+
+  return <div className="clinical-workspace">
+    <section className="chat-card">
+      <header className="chat-head">
+        <div className="ai-avatar"><Icon name="sparkle" size={18} /></div>
+        <div><h2>Clinical co-pilot</h2><p>{editor.form.templateName} · focused findings review</p></div>
+        <span className={`chat-state ${editor.clarificationComplete ? "is-complete" : ""}`}>
+          <span /> {editor.clarificationComplete ? "Complete" : "Reviewing"}
+        </span>
+      </header>
+      <div className="chat-context"><Icon name="info" size={14} /> Describe what you see. The assistant asks only for missing or unclear reportable details.</div>
+      <div className="chat-thread" aria-live="polite">
+        {editor.messages.map((message, index) => <div key={index} className={`message ${message.role === "user" ? "message-user" : "message-ai"}`}>
+          {message.role === "assistant" && <div className="message-mark"><Icon name="sparkle" size={13} /></div>}
+          <div className="message-bubble">{message.content}</div>
+        </div>)}
+        {sending && <div className="message message-ai"><div className="message-mark"><Icon name="sparkle" size={13} /></div><div className="message-bubble typing"><i /><i /><i /></div></div>}
+      </div>
+      <form className="chat-compose" onSubmit={submit}>
+        <AutoTextarea value={input} onChange={(e) => setInput(e.target.value)} minRows={2} placeholder="Type your findings or answer the question…" disabled={sending || editor.clarificationComplete} />
+        <button className="btn btn-primary" disabled={!input.trim() || sending || editor.clarificationComplete} aria-label="Send response"><Icon name="arrowRight" size={16} /></button>
+      </form>
+    </section>
+    <aside className="findings-panel">
+      <div className="card card-tight">
+        <div className="eyebrow">Working summary</div>
+        <h2 className="card-title mt-6">Captured findings</h2>
+        <p className={`findings-copy ${editor.findingsSummary ? "" : "is-empty"}`}>{editor.findingsSummary || "Your consolidated findings will appear here as the conversation progresses."}</p>
+      </div>
+      {editor.error && <div className="notice notice-danger"><Icon name="alert" size={16} /> {editor.error}</div>}
+      <div className="flow-actions flow-actions-stack">
+        <button type="button" className="btn btn-ghost" onClick={editor.backToDetails}>Back to case details</button>
+        <button type="button" className="btn btn-primary btn-lg" onClick={editor.generateFromChat} disabled={!editor.clarificationComplete || generating}>
+          {generating ? <><span className="spinner" /> Drafting report…</> : <>Continue to draft <Icon name="arrowRight" size={15} /></>}
+        </button>
+        {!editor.clarificationComplete && <p>Continue until the assistant has no further questions.</p>}
+      </div>
+    </aside>
+  </div>;
 }
 
 /* ───────────────────────── Review (editable report) ───────────────────────── */
@@ -392,6 +361,17 @@ function ReviewView({ editor, settings, notify }) {
   const startNew = () => {
     if (!approved && !window.confirm("This report hasn't been approved yet. Start a new one anyway?")) return;
     editor.reset();
+  };
+
+  const reject = () => {
+    const patient = report.templateData?.patientName || "this patient";
+    if (
+      window.confirm(
+        `Reject and permanently delete the pending report for ${patient}? This cannot be undone.`,
+      )
+    ) {
+      editor.reject();
+    }
   };
 
   return (
@@ -489,6 +469,14 @@ function ReviewView({ editor, settings, notify }) {
                   disabled={!reviewed || Boolean(busy)}
                 >
                   {busy === "approving" ? <><span className="spinner" /> Saving…</> : <><Icon name="lock" size={15} /> Approve &amp; save</>}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger-ghost btn-block mt-8"
+                  onClick={reject}
+                  disabled={Boolean(busy)}
+                >
+                  {busy === "rejecting" ? <><span className="spinner spinner-danger" /> Deleting…</> : <><Icon name="trash" size={15} /> Reject &amp; delete</>}
                 </button>
                 {impressionStale && (
                   <p className="muted small mt-8">Tip: the impression was drafted before your findings edits.</p>

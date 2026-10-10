@@ -2,8 +2,46 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   buildReportSchema,
+  clarifyFindings,
   generateImpression,
+  parseStructuredResponse,
 } = require("../services/geminiService");
+
+test("parseStructuredResponse accepts JSON wrapped in a Markdown fence", () => {
+  const parsed = parseStructuredResponse({
+    candidates: [{ content: { parts: [{ text: '```json\n{"impression":"Normal","recommendations":""}\n```' }] } }],
+  });
+  assert.equal(parsed.impression, "Normal");
+});
+
+test("clarifyFindings uses the study persona and returns one focused question", async () => {
+  let requestBody;
+  const result = await clarifyFindings({
+    templateName: "Chest X-Ray",
+    technique: "PA chest radiograph.",
+    clinicalFeature: "Fever and cough",
+    messages: [{ role: "user", content: "Right basal opacity." }],
+  }, {
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+          complete: false,
+          question: "Is there an associated pleural effusion?",
+          findingsSummary: "Right basal opacity.",
+        }) }] } }] }),
+      };
+    },
+  });
+
+  assert.match(requestBody.systemInstruction.parts[0].text, /thoracic radiologist/i);
+  assert.equal(requestBody.generationConfig.responseSchema.type, "OBJECT");
+  assert.equal(result.complete, false);
+  assert.equal(result.question, "Is there an associated pleural effusion?");
+  assert.equal(result.findingsSummary, "Right basal opacity.");
+});
 
 const report = {
   templateName: "CT Brain Plain",
@@ -84,7 +122,7 @@ test("generateImpression sends the report schema and reads structured output", a
   assert.equal(result.recommendations, "No additional imaging is required.");
 });
 
-test("generateImpression accepts an empty recommendation when none is warranted", async () => {
+test("generateImpression supplies the no-recommendation message when none is warranted", async () => {
   const result = await generateImpression(report, {
     apiKey: "test-key",
     fetchImpl: async () => ({
@@ -108,7 +146,7 @@ test("generateImpression accepts an empty recommendation when none is warranted"
     }),
   });
 
-  assert.equal(result.recommendations, "");
+  assert.equal(result.recommendations, "No recommendation needed.");
 });
 
 test("generateImpression rejects a report without findings before calling Gemini", async () => {

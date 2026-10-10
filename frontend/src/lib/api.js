@@ -2,6 +2,7 @@ import axios from "axios";
 import { API_BASE } from "./constants";
 import {
   createClientId,
+  deleteLocalReport,
   getLocalReport,
   getLocalReports,
   markLocalChangesSynced,
@@ -32,6 +33,11 @@ export const api = {
       pendingSync: !data.dbPersisted,
       status: "pending",
     });
+  },
+
+  async clarify(payload) {
+    const { data } = await http.post("/api/clarify", payload);
+    return data;
   },
 
   saveDraft(report, draft) {
@@ -73,6 +79,18 @@ export const api = {
       return { ...data, queued: false };
     } catch {
       return { approvedReportId: approval.clientId, queued: true };
+    }
+  },
+
+  async deleteReport(report) {
+    const id = reportId(report);
+    if (!id) throw new Error("Report ID is missing");
+
+    deleteLocalReport(id);
+    try {
+      await http.delete(`/api/report/${encodeURIComponent(id)}`);
+    } catch {
+      // Local-first reports can still be rejected while the database is offline.
     }
   },
 

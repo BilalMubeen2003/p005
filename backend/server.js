@@ -43,13 +43,15 @@ mongoose.connection.on("disconnected", () => {
   scheduleReconnect();
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-  if (process.env.MONGO_URI) {
-    connectDatabase();
-  } else {
-    console.warn("MONGO_URI is not configured; running in local-first mode");
-  }
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+    if (process.env.MONGO_URI) {
+      connectDatabase();
+    } else {
+      console.warn("MONGO_URI is not configured; running in local-first mode");
+    }
+  });
+}
 
 module.exports = app;

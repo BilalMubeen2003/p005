@@ -78,6 +78,10 @@ export default function App() {
       upsertHistory(toHistoryItem(doc, "approved"));
       loadHistory({ silent: true });
     },
+    onRejected: (doc) => {
+      const id = api.idFor(doc);
+      setHistory((previous) => previous.filter((item) => item.id !== id));
+    },
   });
 
   const navigate = useCallback((id) => {

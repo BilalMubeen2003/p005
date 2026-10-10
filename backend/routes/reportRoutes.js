@@ -3,7 +3,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const Report = require("../models/Report");
 const ApprovedReport = require("../models/ApprovedReport");
-const { generateImpression } = require("../services/geminiService");
+const { generateImpression, clarifyFindings } = require("../services/geminiService");
 
 const router = express.Router();
 
@@ -98,6 +98,18 @@ router.get("/health", (_req, res) => {
   res.json({ api: true, database: databaseConnected() });
 });
 
+router.post("/clarify", async (req, res) => {
+  try {
+    const result = await clarifyFindings(req.body || {});
+    res.json(result);
+  } catch (error) {
+    console.error("Error clarifying findings:", error);
+    if (error.code === "INVALID_REPORT") return res.status(400).json({ error: error.message });
+    if (error.code === "GEMINI_NOT_CONFIGURED") return res.status(503).json({ error: "Gemini is not configured" });
+    res.status(502).json({ error: "The clinical assistant could not respond. Please try again." });
+  }
+});
+
 // Generation is independent of MongoDB. The browser stores this response and
 // queues it for background sync when dbPersisted is false.
 router.post("/generate", async (req, res) => {
@@ -128,7 +140,10 @@ router.post("/generate", async (req, res) => {
     if (error.code === "GEMINI_NOT_CONFIGURED") {
       return res.status(503).json({ error: "Gemini is not configured" });
     }
-    res.status(502).json({ error: "Failed to generate impression" });
+    if (error.code === "GEMINI_INVALID_RESPONSE") {
+      return res.status(502).json({ error: "There was an AI response retrieval error. Please try again." });
+    }
+    res.status(502).json({ error: "There was an AI response retrieval error. Please try again." });
   }
 });
 
@@ -144,6 +159,26 @@ router.get("/report/:id", async (req, res) => {
     res.json(report);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch report" });
+  }
+});
+
+router.delete("/report/:id", async (req, res) => {
+  if (!databaseConnected()) {
+    return res.json({ deleted: false, database: false });
+  }
+
+  try {
+    const id = req.params.id;
+    const reportQuery = [{ clientId: id }];
+    if (mongoose.isValidObjectId(id)) reportQuery.push({ _id: id });
+    await Promise.all([
+      Report.deleteOne({ $or: reportQuery }),
+      ApprovedReport.deleteMany({ $or: [{ clientId: id }, { originalReportId: id }] }),
+    ]);
+    res.json({ deleted: true, database: true });
+  } catch (error) {
+    console.error("Error deleting report:", error);
+    res.status(500).json({ error: "Failed to delete report" });
   }
 });
 

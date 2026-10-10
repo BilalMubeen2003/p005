@@ -1,7 +1,7 @@
 // Shared constants for the reporting workflow.
 
 export const API_BASE =
-  import.meta.env.VITE_API_BASE || "http://localhost:5002";
+  import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? "http://localhost:5002" : "");
 
 // region drives the icon shown on template tiles.
 // normalFindings is a starting point the radiologist can insert and then edit.
